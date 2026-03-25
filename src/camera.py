@@ -21,9 +21,13 @@ class CameraStream:
         self._backend = None
         self._picam2 = None
         self._opencv_cap = None
+        self._picamera2_error = None
 
-    def start(self) -> None:
-        if self.config.prefer_picamera2:
+    def start(self, force_backend: str = "auto") -> None:
+        use_picamera2 = force_backend == "picamera2" or (
+            force_backend == "auto" and self.config.prefer_picamera2
+        )
+        if use_picamera2:
             try:
                 from picamera2 import Picamera2
 
@@ -35,14 +39,30 @@ class CameraStream:
                 self._picam2.start()
                 self._backend = "picamera2"
                 return
-            except Exception:
-                # Falls back to OpenCV backend when Picamera2 is unavailable.
+            except Exception as exc:
+                self._picamera2_error = f"{type(exc).__name__}: {exc}"
                 self._picam2 = None
+                if force_backend == "picamera2":
+                    raise RuntimeError(
+                        "Could not start Picamera2 backend. "
+                        f"Details: {self._picamera2_error}"
+                    ) from exc
+
+        if force_backend not in ("auto", "opencv"):
+            raise ValueError(
+                "Invalid backend selection. Use one of: auto, picamera2, opencv."
+            )
 
         self._opencv_cap = cv2.VideoCapture(0)
         if not self._opencv_cap.isOpened():
+            picamera_note = (
+                f" Picamera2 error: {self._picamera2_error}"
+                if self._picamera2_error
+                else ""
+            )
             raise RuntimeError(
                 "No camera available. Verify camera connection and Picamera2/OpenCV setup."
+                + picamera_note
             )
 
         self._opencv_cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
@@ -57,7 +77,10 @@ class CameraStream:
         if self._backend == "opencv" and self._opencv_cap is not None:
             ok, frame = self._opencv_cap.read()
             if not ok:
-                raise RuntimeError("Failed to read frame from OpenCV camera backend.")
+                raise RuntimeError(
+                    "Failed to read frame from OpenCV camera backend. "
+                    "On Raspberry Pi camera module, run with --backend picamera2."
+                )
             return frame
 
         raise RuntimeError("CameraStream not started.")
@@ -79,3 +102,7 @@ class CameraStream:
     @property
     def backend(self) -> str | None:
         return self._backend
+
+    @property
+    def picamera2_error(self) -> str | None:
+        return self._picamera2_error

@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1280, help="Capture width.")
     parser.add_argument("--height", type=int, default=720, help="Capture height.")
     parser.add_argument(
+        "--backend",
+        choices=("auto", "picamera2", "opencv"),
+        default="auto",
+        help="Camera backend to use. For Raspberry Pi camera module use picamera2.",
+    )
+    parser.add_argument(
         "--no-preview",
         action="store_true",
         help="Disable on-screen preview (for headless mode).",
@@ -87,8 +93,10 @@ def run() -> None:
     )
     detector = MobileNetSSDDetector(args.model_dir, args.confidence)
 
-    camera.start()
+    camera.start(force_backend=args.backend)
     print(f"Camera backend: {camera.backend}")
+    if camera.backend != "picamera2" and camera.picamera2_error:
+        print(f"Picamera2 unavailable, fallback reason: {camera.picamera2_error}")
     print("Press 'q' or ESC to quit.")
 
     last_time = time.time()

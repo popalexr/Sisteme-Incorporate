@@ -28,7 +28,7 @@ sudo apt install -y python3-pip python3-venv python3-picamera2 libcamera-apps
 ### 2) Mediu virtual și dependențe Python
 
 ```bash
-python3 -m venv .venv
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -49,7 +49,7 @@ python scripts/download_model.py --insecure
 ## Rulare
 
 ```bash
-python src/main.py --width 1280 --height 720 --confidence 0.5
+python src/main.py --backend picamera2 --width 1280 --height 720 --confidence 0.5
 ```
 
 Taste:
@@ -58,7 +58,7 @@ Taste:
 ## Rulare headless (fără fereastră)
 
 ```bash
-python src/main.py --no-preview
+python src/main.py --backend picamera2 --no-preview
 ```
 
 În modul `--no-preview`, oprești procesul cu `Ctrl+C`.
@@ -87,6 +87,10 @@ Modelul detectează cele 20 clase Pascal VOC (ex: `person`, `car`, `dog`, `cat`,
 - Dacă nu găsește camera:
   - verifică panglica camerei și activarea libcamera
   - testează: `libcamera-hello`
+  - verifică importul `Picamera2` în venv:
+    - `.venv/bin/python -c "from picamera2 import Picamera2; print('ok')"`
+  - dacă importul eșuează, recreează venv cu system packages:
+    - `rm -rf .venv && python3 -m venv --system-site-packages .venv`
 - Dacă rulezi lent:
   - scade rezoluția (`--width 640 --height 480`)
   - crește pragul de încredere (`--confidence 0.6`)
