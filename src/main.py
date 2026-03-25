@@ -1,42 +1,89 @@
 from __future__ import annotations
 
 import argparse
+import threading
 import time
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 import cv2
+import numpy as np
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from camera import CameraConfig, CameraStream
 from detector import MobileNetSSDDetector
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Real-time object detection on Raspberry Pi 5 camera."
-    )
-    parser.add_argument("--model-dir", default="models", help="Directory with model files.")
-    parser.add_argument(
-        "--confidence",
-        type=float,
-        default=0.5,
-        help="Minimum confidence for detections (0..1).",
-    )
-    parser.add_argument("--width", type=int, default=1280, help="Capture width.")
-    parser.add_argument("--height", type=int, default=720, help="Capture height.")
-    parser.add_argument(
-        "--backend",
-        choices=("auto", "picamera2", "opencv"),
-        default="auto",
-        help="Camera backend to use. For Raspberry Pi camera module use picamera2.",
-    )
-    parser.add_argument(
-        "--no-preview",
-        action="store_true",
-        help="Disable on-screen preview (for headless mode).",
-    )
-    return parser.parse_args()
+@dataclass
+class AppConfig:
+    model_dir: str = "models"
+    confidence: float = 0.5
+    width: int = 1280
+    height: int = 720
+    backend: str = "picamera2"
+    jpeg_quality: int = 80
 
 
-def draw_detections(frame, detections, fps: float, backend: str | None) -> None:
+class DetectionService:
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+        self.camera = CameraStream(
+            CameraConfig(width=config.width, height=config.height, prefer_picamera2=True)
+        )
+        self.detector: MobileNetSSDDetector | None = None
+        self._lock = threading.Lock()
+        self._last_frame_time = time.time()
+        self._fps_smooth = 0.0
+
+    def start(self) -> None:
+        self.detector = MobileNetSSDDetector(self.config.model_dir, self.config.confidence)
+        self.camera.start(force_backend=self.config.backend)
+        print(f"Camera backend: {self.camera.backend}")
+        if self.camera.backend != "picamera2" and self.camera.picamera2_error:
+            print(f"Picamera2 unavailable, fallback reason: {self.camera.picamera2_error}")
+
+    def stop(self) -> None:
+        self.camera.stop()
+        self.detector = None
+
+    def get_jpeg_frame(self) -> bytes:
+        with self._lock:
+            if self.detector is None:
+                raise RuntimeError("Detection service is not started.")
+            frame = self.camera.read()
+            detections = self.detector.detect(frame)
+
+            now = time.time()
+            dt = max(now - self._last_frame_time, 1e-6)
+            self._last_frame_time = now
+            instant_fps = 1.0 / dt
+            self._fps_smooth = (
+                instant_fps if self._fps_smooth == 0.0 else (self._fps_smooth * 0.9 + instant_fps * 0.1)
+            )
+
+            draw_detections(frame, detections, self._fps_smooth, self.camera.backend)
+            ok, encoded = cv2.imencode(
+                ".jpg",
+                frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), self.config.jpeg_quality],
+            )
+            if not ok:
+                raise RuntimeError("Failed to encode frame as JPEG.")
+            return encoded.tobytes()
+
+    def status(self) -> dict:
+        return {
+            "camera_backend": self.camera.backend,
+            "picamera2_error": self.camera.picamera2_error,
+            "confidence": self.config.confidence,
+            "resolution": {"width": self.config.width, "height": self.config.height},
+            "jpeg_quality": self.config.jpeg_quality,
+        }
+
+
+def draw_detections(frame: np.ndarray, detections, fps: float, backend: str | None) -> None:
     for det in detections:
         x1, y1, x2, y2 = det.box
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 220, 0), 2)
@@ -85,47 +132,135 @@ def draw_detections(frame, detections, fps: float, backend: str | None) -> None:
     )
 
 
-def run() -> None:
-    args = parse_args()
+def build_app(config: AppConfig) -> FastAPI:
+    service = DetectionService(config)
 
-    camera = CameraStream(
-        CameraConfig(width=args.width, height=args.height, prefer_picamera2=True)
-    )
-    detector = MobileNetSSDDetector(args.model_dir, args.confidence)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        service.start()
+        try:
+            yield
+        finally:
+            service.stop()
 
-    camera.start(force_backend=args.backend)
-    print(f"Camera backend: {camera.backend}")
-    if camera.backend != "picamera2" and camera.picamera2_error:
-        print(f"Picamera2 unavailable, fallback reason: {camera.picamera2_error}")
-    print("Press 'q' or ESC to quit.")
+    app = FastAPI(title="Raspberry Pi 5 Object Detection", lifespan=lifespan)
 
-    last_time = time.time()
-    fps_smooth = 0.0
+    @app.get("/", response_class=HTMLResponse)
+    async def index() -> str:
+        return """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Raspberry Pi 5 Object Detection</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: #f2f5f8;
+        color: #17202a;
+      }
+      .page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid #dde4eb;
+        border-radius: 14px;
+        padding: 18px;
+      }
+      .stream {
+        width: 100%;
+        border-radius: 10px;
+        background: #0e1116;
+      }
+      h1 {
+        margin: 0 0 10px;
+      }
+      p {
+        margin: 6px 0 16px;
+      }
+      .hint {
+        font-size: 14px;
+        color: #516171;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <h1>Object Detection Live</h1>
+        <p>Stream live din camera Raspberry Pi 5.</p>
+        <img class="stream" src="/video_feed" alt="Live stream" />
+        <p class="hint">Status JSON: <code>/status</code></p>
+      </section>
+    </main>
+  </body>
+</html>
+"""
 
-    try:
+    def generate_stream():
         while True:
-            frame = camera.read()
-            detections = detector.detect(frame)
+            frame_bytes = service.get_jpeg_frame()
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-cache\r\n\r\n"
+                + frame_bytes
+                + b"\r\n"
+            )
 
-            now = time.time()
-            dt = max(now - last_time, 1e-6)
-            last_time = now
-            instant_fps = 1.0 / dt
-            fps_smooth = instant_fps if fps_smooth == 0.0 else (fps_smooth * 0.9 + instant_fps * 0.1)
+    @app.get("/video_feed")
+    async def video_feed() -> StreamingResponse:
+        return StreamingResponse(
+            generate_stream(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
 
-            draw_detections(frame, detections, fps_smooth, camera.backend)
+    @app.get("/status")
+    async def status() -> JSONResponse:
+        return JSONResponse(service.status())
 
-            if args.no_preview:
-                continue
+    return app
 
-            cv2.imshow("Raspberry Pi 5 Object Detection", frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord("q")):
-                break
-    finally:
-        camera.stop()
-        cv2.destroyAllWindows()
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="FastAPI web UI for live object detection.")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind.")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind.")
+    parser.add_argument("--model-dir", default="models", help="Directory with model files.")
+    parser.add_argument("--confidence", type=float, default=0.5, help="Detection threshold.")
+    parser.add_argument("--width", type=int, default=1280, help="Capture width.")
+    parser.add_argument("--height", type=int, default=720, help="Capture height.")
+    parser.add_argument(
+        "--backend",
+        choices=("auto", "picamera2", "opencv"),
+        default="picamera2",
+        help="Camera backend to use. For Raspberry Pi camera module use picamera2.",
+    )
+    parser.add_argument("--jpeg-quality", type=int, default=80, help="JPEG quality (1-100).")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = AppConfig(
+        model_dir=args.model_dir,
+        confidence=args.confidence,
+        width=args.width,
+        height=args.height,
+        backend=args.backend,
+        jpeg_quality=max(1, min(100, args.jpeg_quality)),
+    )
+    app = build_app(config)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+app = build_app(AppConfig())
 
 
 if __name__ == "__main__":
-    run()
+    main()

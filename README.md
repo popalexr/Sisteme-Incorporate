@@ -1,14 +1,14 @@
 # Object Detection Live pentru Raspberry Pi 5 (Python)
 
-Proiect Python pentru recunoaștere de obiecte în timp real din camera Raspberry Pi 5.
-Detectorul folosește modelul **MobileNet-SSD** prin `OpenCV DNN`.
+Proiect Python pentru recunoaștere de obiecte în timp real din camera Raspberry Pi 5,
+cu interfață web în FastAPI (fără ferestre OpenCV locale).
 
 ## Ce face
 
 - preia cadre live din cameră (prioritar prin `Picamera2`)
 - face detecție obiecte în fiecare cadru
 - desenează bounding box + etichetă + scor de încredere
-- afișează FPS în timp real
+- servește streamul într-o pagină web (`/`)
 
 ## Cerințe
 
@@ -49,19 +49,22 @@ python scripts/download_model.py --insecure
 ## Rulare
 
 ```bash
-python src/main.py --backend picamera2 --width 1280 --height 720 --confidence 0.5
+python src/main.py --backend picamera2 --host 0.0.0.0 --port 8000 --width 1280 --height 720 --confidence 0.5
 ```
 
-Taste:
-- `q` sau `ESC` pentru ieșire
+După pornire, deschide în browser:
 
-## Rulare headless (fără fereastră)
-
-```bash
-python src/main.py --backend picamera2 --no-preview
+```text
+http://<IP_RASPBERRY_PI>:8000
 ```
 
-În modul `--no-preview`, oprești procesul cu `Ctrl+C`.
+Endpoint-uri:
+
+- `GET /` - interfața web
+- `GET /video_feed` - stream MJPEG live
+- `GET /status` - status backend cameră și configurare
+
+Oprire server: `Ctrl+C`
 
 ## Clase detectate
 
@@ -94,3 +97,4 @@ Modelul detectează cele 20 clase Pascal VOC (ex: `person`, `car`, `dog`, `cat`,
 - Dacă rulezi lent:
   - scade rezoluția (`--width 640 --height 480`)
   - crește pragul de încredere (`--confidence 0.6`)
+  - scade calitatea streamului JPEG (`--jpeg-quality 70`)
