@@ -33,7 +33,7 @@ class CameraStream:
 
                 self._picam2 = Picamera2()
                 camera_config = self._picam2.create_video_configuration(
-                    main={"size": (self.config.width, self.config.height), "format": "RGB888"}
+                    main={"size": (self.config.width, self.config.height), "format": "BGR888"}
                 )
                 self._picam2.configure(camera_config)
                 self._picam2.start()
@@ -71,8 +71,7 @@ class CameraStream:
 
     def read(self) -> np.ndarray:
         if self._backend == "picamera2" and self._picam2 is not None:
-            rgb_frame = self._picam2.capture_array()
-            return cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+            return self._picam2.capture_array()
 
         if self._backend == "opencv" and self._opencv_cap is not None:
             ok, frame = self._opencv_cap.read()
