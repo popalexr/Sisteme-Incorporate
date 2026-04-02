@@ -26,13 +26,19 @@ class AppConfig:
     backend: str = "picamera2"
     jpeg_quality: int = 80
     detect_every_n_frames: int = 2
+    picamera_swap_rb: bool = True
 
 
 class DetectionService:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.camera = CameraStream(
-            CameraConfig(width=config.width, height=config.height, prefer_picamera2=True)
+            CameraConfig(
+                width=config.width,
+                height=config.height,
+                prefer_picamera2=True,
+                picamera_swap_rb=config.picamera_swap_rb,
+            )
         )
         self.detector: YOLOv4TinyDetector | None = None
         self._lock = threading.Lock()
@@ -103,6 +109,7 @@ class DetectionService:
             "resolution": {"width": self.config.width, "height": self.config.height},
             "jpeg_quality": self.config.jpeg_quality,
             "detect_every_n_frames": self.config.detect_every_n_frames,
+            "picamera_swap_rb": self.config.picamera_swap_rb,
             "counts": {
                 "total": sum(self._last_counts.values()),
                 "by_class": self._last_counts,
@@ -309,6 +316,12 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Run model inference every N frames and reuse the last detections between runs.",
     )
+    parser.add_argument(
+        "--picamera-swap-rb",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Swap red/blue channels for Picamera2 frames before OpenCV processing.",
+    )
     return parser.parse_args()
 
 
@@ -322,6 +335,7 @@ def main() -> None:
         backend=args.backend,
         jpeg_quality=max(1, min(100, args.jpeg_quality)),
         detect_every_n_frames=max(1, args.detect_every_n_frames),
+        picamera_swap_rb=args.picamera_swap_rb,
     )
     app = build_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

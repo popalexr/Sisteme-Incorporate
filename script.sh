@@ -9,7 +9,8 @@ set -euo pipefail
   --width 1280 \
   --height 720 \
   --confidence 0.35 \
-  --detect-every-n-frames 2 &
+  --detect-every-n-frames 2 \
+  --picamera-swap-rb &
 
 APP_PID=$!
 

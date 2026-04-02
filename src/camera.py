@@ -11,6 +11,7 @@ class CameraConfig:
     width: int = 1280
     height: int = 720
     prefer_picamera2: bool = True
+    picamera_swap_rb: bool = True
 
 
 class CameraStream:
@@ -71,7 +72,11 @@ class CameraStream:
 
     def read(self) -> np.ndarray:
         if self._backend == "picamera2" and self._picam2 is not None:
-            return self._picam2.capture_array()
+            frame = self._picam2.capture_array()
+            if self.config.picamera_swap_rb:
+                # Some Picamera2 pipelines still arrive as RGB; force BGR for OpenCV/JPEG.
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            return frame
 
         if self._backend == "opencv" and self._opencv_cap is not None:
             ok, frame = self._opencv_cap.read()
