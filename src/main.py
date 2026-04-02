@@ -223,52 +223,28 @@ def build_app(config: AppConfig) -> FastAPI:
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Raspberry Pi 5 Object Detection</title>
+    <title>Live Stream</title>
     <style>
-      :root { color-scheme: light; }
-      body {
-        margin: 0;
-        font-family: "Segoe UI", sans-serif;
-        background: #f2f5f8;
-        color: #17202a;
-      }
-      .page {
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 24px;
-      }
-      .panel {
-        background: #fff;
-        border: 1px solid #dde4eb;
-        border-radius: 14px;
-        padding: 18px;
-      }
-      .stream {
+      html, body {
         width: 100%;
-        border-radius: 10px;
-        background: #0e1116;
+        height: 100%;
+        margin: 0;
       }
-      h1 {
-        margin: 0 0 10px;
+      body {
+        overflow: hidden;
+        background: #000;
       }
-      p {
-        margin: 6px 0 16px;
-      }
-      .hint {
-        font-size: 14px;
-        color: #516171;
+      img {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        object-fit: contain;
+        background: #000;
       }
     </style>
   </head>
   <body>
-    <main class="page">
-      <section class="panel">
-        <h1>Object Detection Live</h1>
-        <p>Stream live din camera Raspberry Pi 5.</p>
-        <img class="stream" src="/video_feed" alt="Live stream" />
-        <p class="hint">Status JSON: <code>/status</code></p>
-      </section>
-    </main>
+    <img src="/video_feed" alt="Live stream" />
   </body>
 </html>
 """
