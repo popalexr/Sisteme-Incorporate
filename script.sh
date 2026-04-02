@@ -6,8 +6,8 @@ set -euo pipefail
   --backend picamera2 \
   --host 0.0.0.0 \
   --port 8000 \
-  --width 1280 \
-  --height 720 \
+  --width 640 \
+  --height 480 \
   --confidence 0.35 &
 
 APP_PID=$!
