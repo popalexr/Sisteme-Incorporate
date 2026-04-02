@@ -1,4 +1,4 @@
-# Object Detection Live pentru Raspberry Pi 5 (Python)
+# Object Detection + Counting Live pentru Raspberry Pi 5 (Python)
 
 Proiect Python pentru recunoaștere de obiecte în timp real din camera Raspberry Pi 5,
 cu interfață web în FastAPI (fără ferestre OpenCV locale).
@@ -8,6 +8,7 @@ cu interfață web în FastAPI (fără ferestre OpenCV locale).
 - preia cadre live din cameră (prioritar prin `Picamera2`)
 - face detecție obiecte în fiecare cadru
 - desenează bounding box + etichetă + scor de încredere
+- numără obiectele detectate pe clase și total pe fiecare cadru
 - servește streamul într-o pagină web (`/`)
 
 ## Cerințe
@@ -49,7 +50,7 @@ python scripts/download_model.py --insecure
 ## Rulare
 
 ```bash
-python src/main.py --backend picamera2 --host 0.0.0.0 --port 8000 --width 1280 --height 720 --confidence 0.5
+python src/main.py --backend picamera2 --host 0.0.0.0 --port 8000 --width 1280 --height 720 --confidence 0.35
 ```
 
 După pornire, deschide în browser:
@@ -62,13 +63,15 @@ Endpoint-uri:
 
 - `GET /` - interfața web
 - `GET /video_feed` - stream MJPEG live
-- `GET /status` - status backend cameră și configurare
+- `GET /status` - status backend cameră, configurare și count-ul curent de obiecte
 
 Oprire server: `Ctrl+C`
 
 ## Clase detectate
 
-Modelul detectează cele 20 clase Pascal VOC (ex: `person`, `car`, `dog`, `cat`, `bus`, `bottle` etc.).
+Modelul folosește YOLOv4-tiny + COCO (`coco.names`) și detectează 80 clase uzuale
+(ex: `person`, `car`, `dog`, `cat`, `bus`, `bottle`, `chair`, `laptop`, `cell phone` etc.).
+În plus, în overlay-ul video apare și numărul de obiecte detectate.
 
 ## Structură
 

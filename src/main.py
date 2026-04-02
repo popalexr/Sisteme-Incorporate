@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import threading
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -13,13 +14,13 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from camera import CameraConfig, CameraStream
-from detector import MobileNetSSDDetector
+from detector import Detection, YOLOv4TinyDetector
 
 
 @dataclass
 class AppConfig:
     model_dir: str = "models"
-    confidence: float = 0.5
+    confidence: float = 0.35
     width: int = 1280
     height: int = 720
     backend: str = "picamera2"
@@ -32,13 +33,14 @@ class DetectionService:
         self.camera = CameraStream(
             CameraConfig(width=config.width, height=config.height, prefer_picamera2=True)
         )
-        self.detector: MobileNetSSDDetector | None = None
+        self.detector: YOLOv4TinyDetector | None = None
         self._lock = threading.Lock()
         self._last_frame_time = time.time()
         self._fps_smooth = 0.0
+        self._last_counts: dict[str, int] = {}
 
     def start(self) -> None:
-        self.detector = MobileNetSSDDetector(self.config.model_dir, self.config.confidence)
+        self.detector = YOLOv4TinyDetector(self.config.model_dir, self.config.confidence)
         self.camera.start(force_backend=self.config.backend)
         print(f"Camera backend: {self.camera.backend}")
         if self.camera.backend != "picamera2" and self.camera.picamera2_error:
@@ -62,8 +64,15 @@ class DetectionService:
             self._fps_smooth = (
                 instant_fps if self._fps_smooth == 0.0 else (self._fps_smooth * 0.9 + instant_fps * 0.1)
             )
+            self._last_counts = count_objects(detections)
 
-            draw_detections(frame, detections, self._fps_smooth, self.camera.backend)
+            draw_detections(
+                frame,
+                detections,
+                self._fps_smooth,
+                self.camera.backend,
+                self._last_counts,
+            )
             ok, encoded = cv2.imencode(
                 ".jpg",
                 frame,
@@ -80,10 +89,25 @@ class DetectionService:
             "confidence": self.config.confidence,
             "resolution": {"width": self.config.width, "height": self.config.height},
             "jpeg_quality": self.config.jpeg_quality,
+            "counts": {
+                "total": sum(self._last_counts.values()),
+                "by_class": self._last_counts,
+            },
         }
 
 
-def draw_detections(frame: np.ndarray, detections, fps: float, backend: str | None) -> None:
+def count_objects(detections: list[Detection]) -> dict[str, int]:
+    counts = Counter(det.label for det in detections)
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def draw_detections(
+    frame: np.ndarray,
+    detections: list[Detection],
+    fps: float,
+    backend: str | None,
+    counts: dict[str, int],
+) -> None:
     for det in detections:
         x1, y1, x2, y2 = det.box
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 220, 0), 2)
@@ -109,7 +133,7 @@ def draw_detections(frame: np.ndarray, detections, fps: float, backend: str | No
             cv2.LINE_AA,
         )
 
-    info = f"FPS: {fps:.1f} | backend: {backend or 'unknown'} | detections: {len(detections)}"
+    info = f"FPS: {fps:.1f} | backend: {backend or 'unknown'} | objects: {len(detections)}"
     cv2.putText(
         frame,
         info,
@@ -130,6 +154,53 @@ def draw_detections(frame: np.ndarray, detections, fps: float, backend: str | No
         1,
         cv2.LINE_AA,
     )
+
+    y = 50
+    if counts:
+        for label, value in list(counts.items())[:8]:
+            line = f"{label}: {value}"
+            cv2.putText(
+                frame,
+                line,
+                (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (15, 15, 15),
+                3,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                line,
+                (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            y += 24
+    else:
+        cv2.putText(
+            frame,
+            "No objects",
+            (10, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (15, 15, 15),
+            3,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            "No objects",
+            (10, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
 
 def build_app(config: AppConfig) -> FastAPI:
@@ -232,7 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind.")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind.")
     parser.add_argument("--model-dir", default="models", help="Directory with model files.")
-    parser.add_argument("--confidence", type=float, default=0.5, help="Detection threshold.")
+    parser.add_argument("--confidence", type=float, default=0.35, help="Detection threshold.")
     parser.add_argument("--width", type=int, default=1280, help="Capture width.")
     parser.add_argument("--height", type=int, default=720, help="Capture height.")
     parser.add_argument(

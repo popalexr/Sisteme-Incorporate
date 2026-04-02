@@ -7,31 +7,6 @@ import cv2
 import numpy as np
 
 
-CLASSES = [
-    "background",
-    "aeroplane",
-    "bicycle",
-    "bird",
-    "boat",
-    "bottle",
-    "bus",
-    "car",
-    "cat",
-    "chair",
-    "cow",
-    "diningtable",
-    "dog",
-    "horse",
-    "motorbike",
-    "person",
-    "pottedplant",
-    "sheep",
-    "sofa",
-    "train",
-    "tvmonitor",
-]
-
-
 @dataclass
 class Detection:
     class_id: int
@@ -40,44 +15,64 @@ class Detection:
     box: tuple[int, int, int, int]
 
 
-class MobileNetSSDDetector:
-    def __init__(self, model_dir: str | Path, confidence_threshold: float = 0.5) -> None:
+class YOLOv4TinyDetector:
+    def __init__(
+        self,
+        model_dir: str | Path,
+        confidence_threshold: float = 0.5,
+        nms_threshold: float = 0.4,
+    ) -> None:
         model_path = Path(model_dir)
-        prototxt = model_path / "deploy.prototxt"
-        caffemodel = model_path / "mobilenet_iter_73000.caffemodel"
+        cfg_path = model_path / "yolov4-tiny.cfg"
+        weights_path = model_path / "yolov4-tiny.weights"
+        names_path = model_path / "coco.names"
 
-        if not prototxt.exists() or not caffemodel.exists():
+        if not cfg_path.exists() or not weights_path.exists() or not names_path.exists():
             raise FileNotFoundError(
                 "Missing model files. Run: python scripts/download_model.py"
             )
 
-        self.net = cv2.dnn.readNetFromCaffe(str(prototxt), str(caffemodel))
+        with names_path.open("r", encoding="utf-8") as f:
+            self.classes = [line.strip() for line in f if line.strip()]
+        if not self.classes:
+            raise RuntimeError("coco.names is empty or invalid.")
+
+        net = cv2.dnn.readNetFromDarknet(str(cfg_path), str(weights_path))
+        self.model = cv2.dnn.DetectionModel(net)
+        self.model.setInputParams(
+            size=(416, 416),
+            scale=1 / 255.0,
+            swapRB=True,
+        )
         self.confidence_threshold = confidence_threshold
+        self.nms_threshold = nms_threshold
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         height, width = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(
-            image=cv2.resize(frame, (300, 300)),
-            scalefactor=0.007843,
-            size=(300, 300),
-            mean=127.5,
+        class_ids, confidences, boxes = self.model.detect(
+            frame,
+            confThreshold=self.confidence_threshold,
+            nmsThreshold=self.nms_threshold,
         )
 
-        self.net.setInput(blob)
-        detections = self.net.forward()
-
         results: list[Detection] = []
-        for i in range(detections.shape[2]):
-            confidence = float(detections[0, 0, i, 2])
-            if confidence < self.confidence_threshold:
+        if len(class_ids) == 0:
+            return results
+
+        for class_id, confidence, box in zip(
+            np.array(class_ids).flatten().tolist(),
+            np.array(confidences).flatten().tolist(),
+            np.array(boxes).tolist(),
+        ):
+            normalized_class_id = class_id
+            if normalized_class_id >= len(self.classes) and 1 <= class_id <= len(self.classes):
+                normalized_class_id = class_id - 1
+            if normalized_class_id < 0 or normalized_class_id >= len(self.classes):
                 continue
 
-            class_id = int(detections[0, 0, i, 1])
-            if class_id < 0 or class_id >= len(CLASSES):
-                continue
-
-            box = detections[0, 0, i, 3:7] * np.array([width, height, width, height])
-            x1, y1, x2, y2 = box.astype(int)
+            x, y, w, h = [int(v) for v in box]
+            x1, y1 = x, y
+            x2, y2 = x + w, y + h
 
             x1 = max(0, min(x1, width - 1))
             y1 = max(0, min(y1, height - 1))
@@ -89,8 +84,8 @@ class MobileNetSSDDetector:
 
             results.append(
                 Detection(
-                    class_id=class_id,
-                    label=CLASSES[class_id],
+                    class_id=normalized_class_id,
+                    label=self.classes[normalized_class_id],
                     confidence=confidence,
                     box=(x1, y1, x2, y2),
                 )
