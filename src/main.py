@@ -25,6 +25,7 @@ class AppConfig:
     height: int = 720
     backend: str = "picamera2"
     jpeg_quality: int = 80
+    detect_every_n_frames: int = 2
 
 
 class DetectionService:
@@ -38,6 +39,8 @@ class DetectionService:
         self._last_frame_time = time.time()
         self._fps_smooth = 0.0
         self._last_counts: dict[str, int] = {}
+        self._last_detections: list[Detection] = []
+        self._frame_index = 0
 
     def start(self) -> None:
         self.detector = YOLOv4TinyDetector(self.config.model_dir, self.config.confidence)
@@ -55,7 +58,18 @@ class DetectionService:
             if self.detector is None:
                 raise RuntimeError("Detection service is not started.")
             frame = self.camera.read()
-            detections = self.detector.detect(frame)
+
+            should_detect = (
+                self._frame_index % self.config.detect_every_n_frames == 0
+                or not self._last_detections
+            )
+            if should_detect:
+                detections = self.detector.detect(frame)
+                self._last_detections = detections
+                self._last_counts = count_objects(detections)
+            else:
+                detections = self._last_detections
+            self._frame_index += 1
 
             now = time.time()
             dt = max(now - self._last_frame_time, 1e-6)
@@ -64,7 +78,6 @@ class DetectionService:
             self._fps_smooth = (
                 instant_fps if self._fps_smooth == 0.0 else (self._fps_smooth * 0.9 + instant_fps * 0.1)
             )
-            self._last_counts = count_objects(detections)
 
             draw_detections(
                 frame,
@@ -89,6 +102,7 @@ class DetectionService:
             "confidence": self.config.confidence,
             "resolution": {"width": self.config.width, "height": self.config.height},
             "jpeg_quality": self.config.jpeg_quality,
+            "detect_every_n_frames": self.config.detect_every_n_frames,
             "counts": {
                 "total": sum(self._last_counts.values()),
                 "by_class": self._last_counts,
@@ -289,6 +303,12 @@ def parse_args() -> argparse.Namespace:
         help="Camera backend to use. For Raspberry Pi camera module use picamera2.",
     )
     parser.add_argument("--jpeg-quality", type=int, default=80, help="JPEG quality (1-100).")
+    parser.add_argument(
+        "--detect-every-n-frames",
+        type=int,
+        default=2,
+        help="Run model inference every N frames and reuse the last detections between runs.",
+    )
     return parser.parse_args()
 
 
@@ -301,6 +321,7 @@ def main() -> None:
         height=args.height,
         backend=args.backend,
         jpeg_quality=max(1, min(100, args.jpeg_quality)),
+        detect_every_n_frames=max(1, args.detect_every_n_frames),
     )
     app = build_app(config)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
