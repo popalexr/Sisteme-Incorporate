@@ -21,9 +21,6 @@ PLAYER_COLOR: Color = (0, 120, 255)
 GOAL_COLOR: Color = (0, 180, 0)
 WALL_COLOR: Color = (180, 0, 0)
 OBSTACLE_COLOR: Color = (255, 160, 0)
-HIT_COLOR: Color = (255, 0, 180)
-WIN_COLOR: Color = (0, 200, 160)
-TEXT_COLOR: Color = (255, 255, 255)
 
 
 class JoystickEvent(Protocol):
@@ -142,7 +139,12 @@ def build_sense_hat(use_mock: bool = False):
     if use_mock or SenseHat is None:
         return MockSenseHat()
 
-    sense = SenseHat()
+    try:
+        sense = SenseHat()
+    except (ImportError, ModuleNotFoundError, OSError) as exc:  # pragma: no cover - hardware dependency
+        print(f"Sense HAT unavailable, using mock backend: {exc}")
+        return MockSenseHat()
+
     sense.low_light = True
     return sense
 
@@ -165,8 +167,6 @@ class MazeReflexGame:
         self._load_level(self.level_index)
 
     def run(self) -> None:
-        self._show_intro()
-
         while not self.quit_requested:
             loop_started_at = time.monotonic()
             self.step(loop_started_at)
@@ -225,14 +225,6 @@ class MazeReflexGame:
         if event.action in ACTIVE_ACTIONS:
             self.quit_requested = True
 
-    def _show_intro(self) -> None:
-        self.sense.show_message(
-            "Blue to green. Avoid orange. Tilt adds drift. Middle quits.",
-            scroll_speed=0.04,
-            text_colour=TEXT_COLOR,
-        )
-        self._draw()
-
     def _load_level(self, index: int) -> None:
         self.level_index = index
         self.player = self.levels[index].start
@@ -289,28 +281,14 @@ class MazeReflexGame:
         return any(obstacle.position == self.player for obstacle in self.obstacles)
 
     def _lose_level(self) -> None:
-        self._flash(HIT_COLOR)
         self._load_level(self.level_index)
 
     def _finish_level(self) -> None:
-        self._flash(WIN_COLOR)
         if self.level_index == len(self.levels) - 1:
-            self.sense.show_message("Ai terminat toate nivelele. Reincepem.", text_colour=WIN_COLOR)
             self._load_level(0)
             return
 
-        self.sense.show_message(
-            f"{self.current_level.name} gata. Urmeaza nivelul {self.level_index + 2}.",
-            text_colour=WIN_COLOR,
-        )
         self._load_level(self.level_index + 1)
-
-    def _flash(self, color: Color, flashes: int = 2, pause: float = 0.08) -> None:
-        for _ in range(flashes):
-            self.sense.clear(*color)
-            time.sleep(pause)
-            self._draw()
-            time.sleep(pause)
 
     def _draw(self) -> None:
         pixels = [BLACK] * (GRID_SIZE * GRID_SIZE)

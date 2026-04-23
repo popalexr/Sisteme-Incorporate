@@ -8,6 +8,7 @@ Folosesti:
 
 Scopul este sa ajungi la punctul verde fara sa fii lovit de obstacolele portocalii.
 Peretii rosii blocheaza miscarea si formeaza labirintul.
+Jocul porneste direct in nivel, fara mesaje scrollate sau efecte de pauza pe matrice.
 
 ## Cerinte
 
@@ -19,7 +20,7 @@ Peretii rosii blocheaza miscarea si formeaza labirintul.
 
 ```bash
 cd Proiect-labirint
-python3 -m venv .venv
+python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -29,8 +30,11 @@ Pe unele imagini de Raspberry Pi OS, biblioteca `sense-hat` si dependintele ei p
 
 ```bash
 sudo apt update
-sudo apt install -y python3-sense-hat
+sudo apt install -y sense-hat python3-sense-hat python3-rtimu
 ```
+
+Daca vezi eroarea `ModuleNotFoundError: No module named 'RTIMU'`, inseamna ca lipseste dependinta nativa folosita de Sense HAT. Pe Raspberry Pi OS, comanda de mai sus este solutia recomandata.
+Daca ai creat deja un venv fara `--system-site-packages`, recreeaza-l pentru ca altfel pachetul instalat prin `apt` nu va fi vizibil in acel mediu virtual.
 
 ## Rulare
 
