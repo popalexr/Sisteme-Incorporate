@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -155,7 +157,8 @@ class MazeReflexGame:
         self.sense = sense
         self.config = config
         self.levels = build_levels()
-        self.level_index = max(0, min(len(self.levels) - 1, config.start_level - 1))
+        self.random = random.Random()
+        self.level_index = max(0, config.start_level - 1)
         self.player = Point(0, 0)
         self.obstacles: list[MovingObstacle] = []
         self.pending_move: tuple[int, int] | None = None
@@ -227,12 +230,18 @@ class MazeReflexGame:
             self.quit_requested = True
 
     def _load_level(self, index: int) -> None:
+        self._ensure_level(index)
         self.level_index = index
         self.player = self.levels[index].start
         self.obstacles = [MovingObstacle(spec=spec) for spec in self.levels[index].obstacles]
         self.pending_move = None
         self.last_tilt_move = 0.0
         self._draw()
+
+    def _ensure_level(self, index: int) -> None:
+        while index >= len(self.levels):
+            level_number = len(self.levels) + 1
+            self.levels.append(generate_procedural_level(level_number, self.random))
 
     def _read_tilt_vector(self) -> tuple[int, int]:
         raw = self.sense.get_accelerometer_raw()
@@ -286,10 +295,6 @@ class MazeReflexGame:
 
     def _finish_level(self) -> None:
         self._win_flicker()
-        if self.level_index == len(self.levels) - 1:
-            self._load_level(0)
-            return
-
         self._load_level(self.level_index + 1)
 
     def _win_flicker(self, flashes: int = 3, pause: float = 0.045) -> None:
@@ -373,58 +378,260 @@ def level_from_rows(
 
 
 def build_levels() -> list[LevelBlueprint]:
-    return [
-        level_from_rows(
-            name="Nivelul 1",
-            rows=(
-                ".......G",
-                "..###...",
-                "........",
-                ".####...",
-                "........",
-                "...####.",
-                "........",
-                "S.......",
-            ),
-            obstacles=(
-                ObstacleSpec(route=line(1, 2, 6, 2), advance_every=2),
-                ObstacleSpec(route=line(0, 6, 5, 6), advance_every=3),
-            ),
+    return [build_first_level()]
+
+
+def build_first_level() -> LevelBlueprint:
+    return level_from_rows(
+        name="Nivelul 1",
+        rows=(
+            ".......G",
+            "..###...",
+            "........",
+            ".####...",
+            "........",
+            "...####.",
+            "........",
+            "S.......",
         ),
-        level_from_rows(
-            name="Nivelul 2",
-            rows=(
-                "..#....G",
-                "..#..##.",
-                "..#.....",
-                "..####..",
-                ".....#..",
-                ".###.#..",
-                ".....#..",
-                "S.##....",
-            ),
-            obstacles=(
-                ObstacleSpec(route=line(3, 0, 6, 0), advance_every=2),
-                ObstacleSpec(route=line(4, 2, 7, 2), advance_every=3),
-                ObstacleSpec(route=line(0, 6, 4, 6), advance_every=2),
-            ),
+        obstacles=(
+            ObstacleSpec(route=line(1, 2, 6, 2), advance_every=2),
+            ObstacleSpec(route=line(0, 6, 5, 6), advance_every=3),
         ),
-        level_from_rows(
-            name="Nivelul 3",
-            rows=(
-                "....#..G",
-                ".##.#.##",
-                "....#...",
-                ".####.#.",
-                "......#.",
-                ".#.#####",
-                ".#......",
-                "S..####.",
-            ),
-            obstacles=(
-                ObstacleSpec(route=line(0, 0, 3, 0), advance_every=2),
-                ObstacleSpec(route=line(5, 2, 7, 2), advance_every=2),
-                ObstacleSpec(route=line(2, 6, 7, 6), advance_every=3),
-            ),
-        ),
-    ]
+    )
+
+
+def generate_procedural_level(level_number: int, rng: random.Random) -> LevelBlueprint:
+    start, goal = corner_pair_for_level(level_number)
+    main_path = generate_main_path(start, goal, rng)
+    protected = set(main_path) | expand_points({start, goal}, radius=1)
+    walls = generate_wall_segments(
+        start=start,
+        goal=goal,
+        protected=protected,
+        rng=rng,
+        segment_target=min(7, 3 + level_number),
+    )
+    obstacles = generate_obstacles(
+        level_number=level_number,
+        walls=walls,
+        path_cells=set(main_path),
+        start=start,
+        goal=goal,
+        rng=rng,
+    )
+    return LevelBlueprint(
+        name=f"Nivelul {level_number}",
+        start=start,
+        goal=goal,
+        walls=frozenset(walls),
+        obstacles=obstacles,
+    )
+
+
+def corner_pair_for_level(level_number: int) -> tuple[Point, Point]:
+    pairs = (
+        (Point(0, 7), Point(7, 0)),
+        (Point(7, 7), Point(0, 0)),
+        (Point(0, 0), Point(7, 7)),
+        (Point(7, 0), Point(0, 7)),
+    )
+    return pairs[(level_number - 2) % len(pairs)]
+
+
+def generate_main_path(start: Point, goal: Point, rng: random.Random) -> tuple[Point, ...]:
+    if rng.choice((True, False)):
+        mid_y = rng.randint(1, GRID_SIZE - 2)
+        return stitch_lines(
+            line(start.x, start.y, start.x, mid_y),
+            line(start.x, mid_y, goal.x, mid_y),
+            line(goal.x, mid_y, goal.x, goal.y),
+        )
+
+    mid_x = rng.randint(1, GRID_SIZE - 2)
+    return stitch_lines(
+        line(start.x, start.y, mid_x, start.y),
+        line(mid_x, start.y, mid_x, goal.y),
+        line(mid_x, goal.y, goal.x, goal.y),
+    )
+
+
+def stitch_lines(*parts: tuple[Point, ...]) -> tuple[Point, ...]:
+    points: list[Point] = []
+    for part in parts:
+        if not part:
+            continue
+        if not points:
+            points.extend(part)
+            continue
+        points.extend(part[1:])
+    return tuple(points)
+
+
+def expand_points(points: set[Point], radius: int) -> set[Point]:
+    expanded = set(points)
+    for point in list(points):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                neighbor = Point(point.x + dx, point.y + dy)
+                if neighbor.inside():
+                    expanded.add(neighbor)
+    return expanded
+
+
+def generate_wall_segments(
+    start: Point,
+    goal: Point,
+    protected: set[Point],
+    rng: random.Random,
+    segment_target: int,
+) -> set[Point]:
+    walls: set[Point] = set()
+    placed_segments = 0
+    attempts = 0
+
+    while placed_segments < segment_target and attempts < 240:
+        attempts += 1
+        candidate = make_wall_segment(rng)
+        if not candidate:
+            continue
+        if candidate & protected:
+            continue
+        if candidate & walls:
+            continue
+        if creates_dense_block(walls, candidate):
+            continue
+
+        combined = walls | candidate
+        if not has_path(start, goal, combined):
+            continue
+
+        walls = combined
+        placed_segments += 1
+
+    return walls
+
+
+def make_wall_segment(rng: random.Random) -> set[Point]:
+    horizontal = rng.choice((True, False))
+    length = rng.randint(2, 4)
+    if horizontal:
+        y = rng.randint(1, GRID_SIZE - 2)
+        x = rng.randint(0, GRID_SIZE - length)
+        return {Point(x + offset, y) for offset in range(length)}
+
+    x = rng.randint(1, GRID_SIZE - 2)
+    y = rng.randint(0, GRID_SIZE - length)
+    return {Point(x, y + offset) for offset in range(length)}
+
+
+def creates_dense_block(existing: set[Point], candidate: set[Point]) -> bool:
+    combined = existing | candidate
+    for x in range(GRID_SIZE - 1):
+        for y in range(GRID_SIZE - 1):
+            square = {
+                Point(x, y),
+                Point(x + 1, y),
+                Point(x, y + 1),
+                Point(x + 1, y + 1),
+            }
+            if square <= combined:
+                return True
+    return False
+
+
+def has_path(start: Point, goal: Point, walls: set[Point]) -> bool:
+    queue = deque([start])
+    seen = {start}
+
+    while queue:
+        point = queue.popleft()
+        if point == goal:
+            return True
+
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            neighbor = point.moved(dx, dy)
+            if not neighbor.inside() or neighbor in walls or neighbor in seen:
+                continue
+            seen.add(neighbor)
+            queue.append(neighbor)
+
+    return False
+
+
+def generate_obstacles(
+    level_number: int,
+    walls: set[Point],
+    path_cells: set[Point],
+    start: Point,
+    goal: Point,
+    rng: random.Random,
+) -> tuple[ObstacleSpec, ...]:
+    candidates = obstacle_route_candidates(walls, start, goal)
+    rng.shuffle(candidates)
+    candidates.sort(key=lambda route: obstacle_priority(route, path_cells), reverse=True)
+
+    obstacle_target = min(4, 1 + level_number // 2)
+    chosen: list[ObstacleSpec] = []
+    used_cells: set[Point] = set()
+
+    for route in candidates:
+        route_cells = set(route)
+        if route_cells & expand_points({start, goal}, radius=1):
+            continue
+        if route_cells & used_cells:
+            continue
+
+        chosen.append(
+            ObstacleSpec(
+                route=route,
+                advance_every=rng.choice((2, 2, 3)),
+            )
+        )
+        used_cells |= route_cells
+        if len(chosen) >= obstacle_target:
+            break
+
+    return tuple(chosen)
+
+
+def obstacle_route_candidates(
+    walls: set[Point],
+    start: Point,
+    goal: Point,
+) -> list[tuple[Point, ...]]:
+    blocked = set(walls) | {start, goal}
+    candidates: list[tuple[Point, ...]] = []
+
+    for y in range(GRID_SIZE):
+        run: list[Point] = []
+        for x in range(GRID_SIZE):
+            point = Point(x, y)
+            if point in blocked:
+                if len(run) >= 3:
+                    candidates.append(tuple(run))
+                run = []
+                continue
+            run.append(point)
+        if len(run) >= 3:
+            candidates.append(tuple(run))
+
+    for x in range(GRID_SIZE):
+        run = []
+        for y in range(GRID_SIZE):
+            point = Point(x, y)
+            if point in blocked:
+                if len(run) >= 3:
+                    candidates.append(tuple(run))
+                run = []
+                continue
+            run.append(point)
+        if len(run) >= 3:
+            candidates.append(tuple(run))
+
+    return candidates
+
+
+def obstacle_priority(route: tuple[Point, ...], path_cells: set[Point]) -> tuple[int, int]:
+    intersections = len(set(route) & path_cells)
+    return (intersections, len(route))

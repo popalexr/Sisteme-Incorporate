@@ -9,6 +9,7 @@ Folosesti:
 Scopul este sa ajungi la punctul verde fara sa fii lovit de obstacolele portocalii.
 Peretii rosii blocheaza miscarea si formeaza labirintul.
 Jocul porneste direct in nivel, fara mesaje scrollate; la castigare exista doar un flicker verde foarte scurt.
+Primul nivel este fix, iar urmatoarele sunt generate procedural, cu traseu valid, pereti grupati pe segmente si obstacole mobile plasate logic.
 
 ## Cerinte
 
