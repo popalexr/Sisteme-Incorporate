@@ -21,6 +21,7 @@ PLAYER_COLOR: Color = (0, 120, 255)
 GOAL_COLOR: Color = (0, 180, 0)
 WALL_COLOR: Color = (180, 0, 0)
 OBSTACLE_COLOR: Color = (255, 160, 0)
+WIN_COLOR: Color = (0, 220, 120)
 
 
 class JoystickEvent(Protocol):
@@ -284,11 +285,19 @@ class MazeReflexGame:
         self._load_level(self.level_index)
 
     def _finish_level(self) -> None:
+        self._win_flicker()
         if self.level_index == len(self.levels) - 1:
             self._load_level(0)
             return
 
         self._load_level(self.level_index + 1)
+
+    def _win_flicker(self, flashes: int = 3, pause: float = 0.045) -> None:
+        for _ in range(flashes):
+            self.sense.clear(*WIN_COLOR)
+            time.sleep(pause)
+            self._draw()
+            time.sleep(pause)
 
     def _draw(self) -> None:
         pixels = [BLACK] * (GRID_SIZE * GRID_SIZE)

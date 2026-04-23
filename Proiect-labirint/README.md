@@ -8,7 +8,7 @@ Folosesti:
 
 Scopul este sa ajungi la punctul verde fara sa fii lovit de obstacolele portocalii.
 Peretii rosii blocheaza miscarea si formeaza labirintul.
-Jocul porneste direct in nivel, fara mesaje scrollate sau efecte de pauza pe matrice.
+Jocul porneste direct in nivel, fara mesaje scrollate; la castigare exista doar un flicker verde foarte scurt.
 
 ## Cerinte
 
